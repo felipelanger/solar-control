@@ -1,0 +1,99 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>  // Biblioteca para suporte mDNS
+
+// Configuração do WiFi
+const char* ssid = "essid name";
+const char* password = "pass";
+
+// Configuração do hostname e servidor web
+const char* hostname = "solar-control";
+ESP8266WebServer servidor(80);
+
+// Pino analógico do ESP8266
+#define ANALOG_IN_PIN A0
+
+// Variáveis para leitura e cálculo da tensão
+float adc_voltage = 0.0;
+float in_voltage = 0.0;
+float R1 = 30000.0;     // Resistores do divisor de tensão
+float R2 = 7500.0;
+float ref_voltage = 3.3; // Tensão de referência do ESP8266 (3.3V)
+int adc_value = 0;
+
+void setup() {
+  // Inicializa o monitor serial
+  Serial.begin(9600);
+  Serial.println("Iniciando Solar Control");
+
+  // Conecta-se ao WiFi
+  WiFi.hostname(hostname);     // Define o hostname
+  WiFi.begin(ssid, password);  // Conecta à rede WiFi
+
+  // Aguarda conexão
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConectado ao WiFi!");
+  Serial.print("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+
+  // Inicia o mDNS
+  if (MDNS.begin(hostname)) {
+    Serial.println("mDNS responder iniciado");
+  } else {
+    Serial.println("Erro ao iniciar mDNS");
+  }
+
+  // Inicia o servidor web e define os manipuladores de rota
+  servidor.on("/", handleRoot);
+  servidor.on("/dados", handleDados);  // Endpoint para enviar dados
+  servidor.begin();
+  Serial.println("Servidor web iniciado!");
+}
+
+// Função para exibir a página principal com HTML responsivo
+void handleRoot() {
+  String paginaHTML = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  paginaHTML += "<title>Solar Control</title>";
+  paginaHTML += "<style>body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }";
+  paginaHTML += "h1 { font-size: 2em; } p { font-size: 1.5em; } #voltagem { font-weight: bold; }</style>";
+  paginaHTML += "<script>";
+  paginaHTML += "function atualizarDados() {";
+  paginaHTML += "  var xhttp = new XMLHttpRequest();";
+  paginaHTML += "  xhttp.onreadystatechange = function() {";
+  paginaHTML += "    if (this.readyState == 4 && this.status == 200) {";
+  paginaHTML += "      document.getElementById('voltagem').innerHTML = this.responseText + ' V';";
+  paginaHTML += "    }";
+  paginaHTML += "  };";
+  paginaHTML += "  xhttp.open('GET', '/dados', true);";
+  paginaHTML += "  xhttp.send();";
+  paginaHTML += "}";
+  paginaHTML += "setInterval(atualizarDados, 2000);"; // Atualiza a cada 2 segundos
+  paginaHTML += "</script></head><body>";
+  paginaHTML += "<div><h1>Monitor de Tensão</h1>";
+  paginaHTML += "<p><strong>Input Voltage:</strong> <span id='voltagem'>-</span></p></div>";
+  paginaHTML += "</body></html>";
+
+  servidor.send(200, "text/html", paginaHTML);
+}
+
+// Função para calcular e enviar a tensão em formato simples
+void handleDados() {
+  adc_value = analogRead(ANALOG_IN_PIN);
+  adc_voltage = (adc_value * ref_voltage) / 1024.0;
+  in_voltage = adc_voltage / (R2 / (R1 + R2));
+
+  // Define in_voltage como 0 se o valor calculado for menor que 0.05V
+  if (in_voltage < 0.05) {
+    in_voltage = 0.0;
+  }
+
+  servidor.send(200, "text/plain", String(in_voltage, 2));
+}
+
+void loop() {
+  servidor.handleClient(); // Mantém o servidor respondendo às requisições
+  MDNS.update();           // Mantém o serviço mDNS ativo
+}
